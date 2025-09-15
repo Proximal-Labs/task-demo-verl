@@ -98,6 +98,7 @@ class AdvantageEstimator(str, Enum):
     REMAX = "remax"
     RLOO = "rloo"
     OPO = "opo"
+    REINFORCE_PLUS_PLUS = "reinforce_plus_plus"
     GRPO_PASSK = "grpo_passk"
     GPG = "gpg"
 
@@ -436,6 +437,43 @@ def compute_rloo_outcome_advantage(
         scores = scores.unsqueeze(-1) * response_mask
 
     return scores, scores
+
+
+@register_adv_est(AdvantageEstimator.REINFORCE_PLUS_PLUS)  # or simply: @register_adv_est("reinforce_plus_plus")
+def compute_reinforce_plus_plus_outcome_advantage(
+    token_level_rewards: torch.Tensor, response_mask: torch.Tensor, config: Optional[AlgoConfig] = None, **kwargs
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute advantage for REINFORCE++.
+    This implementation is based on the paper: https://arxiv.org/abs/2501.03262
+    Args:
+        token_level_rewards: `(torch.Tensor)`
+            shape: (bs, response_length)
+        response_mask: `(torch.Tensor)`
+            shape: (bs, response_length)
+        config: (AlgoConfig) algorithm config
+    Returns:
+        advantages: `(torch.Tensor)`
+            shape: (bs, response_length)
+        Returns: `(torch.Tensor)`
+            shape: (bs, response_length)
+    """
+    assert config is not None
+    gamma = config.gamma
+    with torch.no_grad():
+        returns = torch.zeros_like(token_level_rewards)
+        running_return = 0
+
+        for t in reversed(range(token_level_rewards.shape[1])):
+            running_return = token_level_rewards[:, t] + gamma * running_return
+            returns[:, t] = running_return
+            # Reset after EOS
+            running_return = running_return * response_mask[:, t]
+
+        advantages = verl_F.masked_whiten(returns, response_mask)
+        advantages = advantages * response_mask
+
+    return advantages, returns
 
 
 @register_adv_est(AdvantageEstimator.OPO)  # or simply: @register_adv_est("opo")
